@@ -1,0 +1,43 @@
+name: 沃尔玛订单邮件自动监控与钉钉推送
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: walmart-order-monitor
+  cancel-in-progress: false
+
+jobs:
+  check-orders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 运行订单邮件监控
+        env:
+          IMAP_SERVER: "imap.qq.com"
+          IMAP_PORT: "993"
+          EMAIL_ACCOUNT: ${{ secrets.EMAIL_ACCOUNT }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          SENDER_FILTER: "walmart"
+          SUBJECT_FILTER: "Order"
+        run: python walmart_listener_cloud.py
+
+      - name: 提交已处理邮件记录（防重复推送）
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: 同步已处理邮件记录 [skip ci]"
+          file_pattern: "processed_emails.txt"
