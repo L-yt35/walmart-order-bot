@@ -13,7 +13,6 @@ import urllib.request
 from datetime import datetime, timezone, timedelta
 
 # ==================== 配置区域 ====================
-# 所有敏感信息一律从 GitHub Secrets 环境变量读取，代码中不留任何明文
 IMAP_SERVER = os.environ.get("IMAP_SERVER", "imap.qq.com")
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
 EMAIL_ACCOUNT = os.environ.get("EMAIL_ACCOUNT", "").strip()
@@ -30,7 +29,6 @@ PROCESSED_IDS_FILE = "processed_emails.txt"
 
 
 def check_config():
-    """启动前校验必要参数是否齐全"""
     missing = []
     for name, val in [
         ("EMAIL_ACCOUNT", EMAIL_ACCOUNT),
@@ -41,7 +39,6 @@ def check_config():
             missing.append(name)
     if missing:
         print(f"[配置错误] 缺少环境变量: {', '.join(missing)}")
-        print("请在 GitHub 仓库 Settings -> Secrets and variables -> Actions 中补齐。")
         sys.exit(1)
 
 
@@ -53,7 +50,6 @@ def load_processed_ids():
 
 
 def save_processed_ids(ids_set):
-    """只保留最近 2000 条，避免文件无限膨胀"""
     with open(PROCESSED_IDS_FILE, "w", encoding="utf-8") as f:
         for item in sorted(ids_set)[-2000:]:
             f.write(f"{item}\n")
@@ -133,26 +129,28 @@ def run_once():
         mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
         mail.select("INBOX")
 
-        status, messages = mail.search(None, "UNSEEN")
+        status, messages = mail.search(None, "ALL")
         if status != "OK" or not messages[0]:
-            print("没有未读邮件。")
+            print("收件箱为空。")
             mail.logout()
             return
 
-        email_ids = messages[0].split()
-        print(f"发现 {len(email_ids)} 封未读邮件，正在匹配沃尔玛订单...")
+        all_ids = messages[0].split()
+        recent_ids = all_ids[-30:]
+        print(f"收件箱共 {len(all_ids)} 封邮件，正在扫描最近 {len(recent_ids)} 封...")
         hit = 0
 
-        for e_id in email_ids:
-            str_id = e_id.decode("utf-8")
-            if str_id in processed_ids:
-                continue
-
+        for e_id in recent_ids:
             res, msg_data = mail.fetch(e_id, "(RFC822)")
             if res != "OK":
                 continue
 
             msg = email.message_from_bytes(msg_data[0][1])
+            message_id = msg.get("Message-ID", "").strip() or e_id.decode("utf-8")
+
+            if message_id in processed_ids:
+                continue
+
             subject = decode_str(msg.get("Subject", ""))
             sender = decode_str(msg.get("From", ""))
 
@@ -175,11 +173,11 @@ def run_once():
                 send_dingtalk_markdown("【订单提醒】沃尔玛新订单", markdown_text)
                 hit += 1
 
-            new_processed.add(str_id)
+            new_processed.add(message_id)
 
         save_processed_ids(new_processed)
         mail.logout()
-        print(f"检查完成，本次命中沃尔玛订单 {hit} 条。")
+        print(f"检查完成，本次新推送沃尔玛订单 {hit} 条。")
 
     except Exception as e:
         print(f"执行检查异常: {e}")
